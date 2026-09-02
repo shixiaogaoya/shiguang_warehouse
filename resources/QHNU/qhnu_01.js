@@ -185,14 +185,19 @@
 
     async function selectSemester(runtimeToken) {
         const semesters = await fetchAllSemesterOptions(runtimeToken);
-        let defaultIndex = semesters.findIndex(function (semester) {
-            return semester.sfdq === "0";
+        const currentIndex = semesters.findIndex(function (semester) {
+            return String(semester.sfdq) === "0";
         });
-        if (defaultIndex < 0) defaultIndex = 0;
+        if (currentIndex > 0) {
+            semesters.unshift(semesters.splice(currentIndex, 1)[0]);
+        }
+        const hasCurrentSemester = currentIndex >= 0;
         const selectedIndex = await window.shiguangBridgePromise.showSingleSelection(
             "请选择导入学期",
-            JSON.stringify(semesters.map(function (semester) { return semester.xqmc; })),
-            defaultIndex
+            JSON.stringify(semesters.map(function (semester, index) {
+                return index === 0 && hasCurrentSemester ? semester.xqmc + "（当前）" : semester.xqmc;
+            })),
+            0
         );
         if (selectedIndex === null || selectedIndex === undefined || selectedIndex === -1) return null;
         if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= semesters.length) {
