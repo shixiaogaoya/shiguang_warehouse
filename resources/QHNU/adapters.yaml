@@ -5,5 +5,5 @@ adapters:
     category: "POSTGRADUATE"
     asset_js_path: "qhnu_01.js"
     import_url: "http://one.qhnu.edu.cn/default/portal/index.jsp"
-    maintainer: "ming"
+    maintainer: "shixiaogaoya"
     description: "完成统一身份认证并进入研究生教务系统后执行导入，在弹窗中选择目标学期。"

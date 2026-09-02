@@ -124,63 +124,39 @@
         }
     }
 
-    async function fetchSemesterPage(page, runtimeToken) {
-        const requestUrl = new URL(SEMESTER_PATH, EXPECTED_ORIGIN);
-        requestUrl.searchParams.set("page", String(page));
-        requestUrl.searchParams.set("size", "999");
-        requestUrl.searchParams.set("sort", "xqdm,desc");
-        const payload = await requestJson(requestUrl, runtimeToken, "学期列表");
-        const pageResult = validatePageResponse(payload, "学期列表");
-        return {
-            totalElements: pageResult.totalElements,
-            content: pageResult.content.map(function (semester, index) {
-                if (!semester || typeof semester !== "object" || Array.isArray(semester)) {
-                    throw new Error("学期列表第 " + (index + 1) + " 项结构异常。");
-                }
-                return {
-                    id: requireText(semester.id, "学期列表第 " + (index + 1) + " 项 id"),
-                    xqmc: requireText(semester.xqmc, "学期列表第 " + (index + 1) + " 项名称"),
-                    sfdq: semester.sfdq === null || semester.sfdq === undefined ? "" : String(semester.sfdq).trim()
-                };
-            })
-        };
-    }
-
     async function fetchAllSemesterOptions(runtimeToken) {
-        const semesters = [];
-        const seenIds = new Set();
-        let expectedTotal = null;
-        let page = 0;
-
-        while (expectedTotal === null || semesters.length < expectedTotal) {
-            const pageResult = await fetchSemesterPage(page, runtimeToken);
-            if (expectedTotal === null) {
-                expectedTotal = pageResult.totalElements;
-                if (expectedTotal === 0 && pageResult.content.length === 0) {
-                    throw new Error("学期列表为空，无法继续导入。");
-                }
-            } else if (pageResult.totalElements !== expectedTotal) {
-                throw new Error("学期列表分页总数发生变化，请稍后重试。");
+        return await fetchAllPages(
+            async function (page) {
+                const requestUrl = new URL(SEMESTER_PATH, EXPECTED_ORIGIN);
+                requestUrl.searchParams.set("page", String(page));
+                requestUrl.searchParams.set("size", "999");
+                requestUrl.searchParams.set("sort", "xqdm,desc");
+                const payload = await requestJson(requestUrl, runtimeToken, "学期列表");
+                const pageResult = validatePageResponse(payload, "学期列表");
+                return {
+                    totalElements: pageResult.totalElements,
+                    content: pageResult.content.map(function (semester, index) {
+                        if (!semester || typeof semester !== "object" || Array.isArray(semester)) {
+                            throw new Error("学期列表第 " + (index + 1) + " 项结构异常。");
+                        }
+                        return {
+                            id: requireText(semester.id, "学期列表第 " + (index + 1) + " 项 id"),
+                            xqmc: requireText(semester.xqmc, "学期列表第 " + (index + 1) + " 项名称"),
+                            sfdq: semester.sfdq === null || semester.sfdq === undefined ? "" : String(semester.sfdq).trim()
+                        };
+                    })
+                };
+            },
+            function (semester) { return semester.id; },
+            {
+                empty: "学期列表为空，无法继续导入。",
+                totalChanged: "学期列表分页总数发生变化，请稍后重试。",
+                emptyPage: "学期列表在读取完成前返回空页，请稍后重试。",
+                duplicate: "学期列表出现重复 id，请稍后重试。",
+                overflow: "学期列表记录数超过接口声明总数，请稍后重试。",
+                incomplete: "学期列表未完整返回，请稍后重试。"
             }
-            if (pageResult.content.length === 0) {
-                throw new Error("学期列表在读取完成前返回空页，请稍后重试。");
-            }
-            pageResult.content.forEach(function (semester) {
-                if (seenIds.has(semester.id)) {
-                    throw new Error("学期列表出现重复 id，请稍后重试。");
-                }
-                seenIds.add(semester.id);
-                semesters.push(semester);
-            });
-            if (semesters.length > expectedTotal) {
-                throw new Error("学期列表记录数超过接口声明总数，请稍后重试。");
-            }
-            page += 1;
-        }
-        if (semesters.length !== expectedTotal) {
-            throw new Error("学期列表未完整返回，请稍后重试。");
-        }
-        return semesters;
+        );
     }
 
     async function selectSemester(runtimeToken) {
@@ -206,59 +182,64 @@
         return semesters[selectedIndex];
     }
 
-    async function fetchSchedulePage(semesterCode, page, runtimeToken) {
-        const requestUrl = new URL(SCHEDULE_PATH, EXPECTED_ORIGIN);
-        requestUrl.searchParams.set("page", String(page));
-        requestUrl.searchParams.set("size", "999");
-        requestUrl.searchParams.set("sort", "createTime,desc");
-        requestUrl.searchParams.set("xqcode", semesterCode);
-        const payload = await requestJson(requestUrl, runtimeToken, "课表");
-        return validatePageResponse(payload, "课表");
+    async function fetchAllScheduleRecords(semesterCode, runtimeToken) {
+        return await fetchAllPages(
+            async function (page) {
+                const requestUrl = new URL(SCHEDULE_PATH, EXPECTED_ORIGIN);
+                requestUrl.searchParams.set("page", String(page));
+                requestUrl.searchParams.set("size", "999");
+                requestUrl.searchParams.set("sort", "createTime,desc");
+                requestUrl.searchParams.set("xqcode", semesterCode);
+                const payload = await requestJson(requestUrl, runtimeToken, "课表");
+                return validatePageResponse(payload, "课表");
+            },
+            function (record) { return JSON.stringify(record); },
+            {
+                empty: "所选学期暂无课程，未保存空课表。",
+                totalChanged: "课表分页总数发生变化，请稍后重新导入。",
+                emptyPage: "课表分页在读取完成前返回空页，请稍后重新导入。",
+                duplicate: "课表分页未继续前进，请稍后重新导入。",
+                overflow: "课表分页记录数超过接口声明总数，请稍后重新导入。",
+                incomplete: "课表记录未完整返回，请稍后重新导入。"
+            }
+        );
     }
 
-    async function fetchAllScheduleRecords(semesterCode, runtimeToken) {
-        const token = runtimeToken || getRuntimeToken();
+    async function fetchAllPages(fetchPage, getSignature, messages) {
         const records = [];
-        const seenRecordSignatures = new Set();
+        const seenSignatures = new Set();
         let expectedTotal = null;
         let page = 0;
 
         while (expectedTotal === null || records.length < expectedTotal) {
-            const pageResult = await fetchSchedulePage(semesterCode, page, token);
+            const pageResult = await fetchPage(page);
             if (expectedTotal === null) {
                 expectedTotal = pageResult.totalElements;
                 if (expectedTotal === 0 && pageResult.content.length === 0) {
-                    throw new Error("所选学期暂无课程，未保存空课表。");
+                    throw new Error(messages.empty);
                 }
             } else if (pageResult.totalElements !== expectedTotal) {
-                throw new Error("课表分页总数发生变化，请稍后重新导入。");
+                throw new Error(messages.totalChanged);
             }
-
             if (pageResult.content.length === 0) {
-                throw new Error("课表分页在读取完成前返回空页，请稍后重新导入。");
+                throw new Error(messages.emptyPage);
             }
 
-            const pageRecordSignatures = pageResult.content.map(function (record) {
-                return JSON.stringify(record);
+            pageResult.content.forEach(function (record) {
+                const signature = getSignature(record);
+                if (seenSignatures.has(signature)) {
+                    throw new Error(messages.duplicate);
+                }
+                seenSignatures.add(signature);
+                records.push(record);
             });
-            if (pageRecordSignatures.some(function (signature) {
-                return seenRecordSignatures.has(signature);
-            })) {
-                throw new Error("课表分页未继续前进，请稍后重新导入。");
-            }
-            pageRecordSignatures.forEach(function (signature) {
-                seenRecordSignatures.add(signature);
-            });
-            records.push.apply(records, pageResult.content);
-
             if (records.length > expectedTotal) {
-                throw new Error("课表分页记录数超过接口声明总数，请稍后重新导入。");
+                throw new Error(messages.overflow);
             }
             page += 1;
         }
-
         if (records.length !== expectedTotal) {
-            throw new Error("课表记录未完整返回，请稍后重新导入。");
+            throw new Error(messages.incomplete);
         }
         return records;
     }
@@ -647,7 +628,6 @@
         try {
             assertSystemOrigin();
             assertBridgeCapabilities();
-            showToast("正在读取青海师范大学学期列表...");
             const runtimeToken = getRuntimeToken();
             const selectedSemester = await selectSemester(runtimeToken);
             if (!selectedSemester) return;
@@ -683,22 +663,5 @@
         }
     }
 
-    const isNodeTestMode = typeof process !== "undefined" &&
-        process.versions && process.versions.node &&
-        typeof globalThis !== "undefined" && globalThis.__QHNU_TEST_MODE__ === true;
-    if (isNodeTestMode) {
-        globalThis.__QHNU_TEST__ = Object.freeze({
-            validatePageResponse: validatePageResponse,
-            fetchAllSemesterOptions: fetchAllSemesterOptions,
-            selectSemester: selectSemester,
-            fetchAllScheduleRecords: fetchAllScheduleRecords,
-            parseWeeks: parseWeeks,
-            parseScheduleFragments: parseScheduleFragments,
-            parseCourses: parseCourses,
-            buildCourseConfig: buildCourseConfig,
-            runImportFlow: runImportFlow
-        });
-    } else {
-        runImportFlow();
-    }
+    runImportFlow();
 })();
