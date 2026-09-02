@@ -164,22 +164,42 @@
         const currentIndex = semesters.findIndex(function (semester) {
             return String(semester.sfdq) === "0";
         });
-        if (currentIndex > 0) {
-            semesters.unshift(semesters.splice(currentIndex, 1)[0]);
-        }
         const hasCurrentSemester = currentIndex >= 0;
+        const seasonOrder = { "秋": 0, "夏": 1, "春": 2 };
+        const semesterEntries = semesters.map(function (semester, originalIndex) {
+            const match = /^(\d{4})年(春|夏|秋)季学期$/.exec(semester.xqmc);
+            return {
+                semester: semester,
+                originalIndex: originalIndex,
+                year: match ? Number(match[1]) : null,
+                season: match ? match[2] : null
+            };
+        }).sort(function (left, right) {
+            if (left.originalIndex === right.originalIndex) return 0;
+            if (left.originalIndex === currentIndex) return -1;
+            if (right.originalIndex === currentIndex) return 1;
+            if (left.year !== null && right.year === null) return -1;
+            if (left.year === null && right.year !== null) return 1;
+            if (left.year !== null && right.year !== null) {
+                if (left.year !== right.year) return right.year - left.year;
+                const seasonDifference = seasonOrder[left.season] - seasonOrder[right.season];
+                if (seasonDifference !== 0) return seasonDifference;
+            }
+            return left.originalIndex - right.originalIndex;
+        });
         const selectedIndex = await window.shiguangBridgePromise.showSingleSelection(
             "请选择导入学期",
-            JSON.stringify(semesters.map(function (semester, index) {
-                return index === 0 && hasCurrentSemester ? semester.xqmc + "（当前）" : semester.xqmc;
+            JSON.stringify(semesterEntries.map(function (entry) {
+                return hasCurrentSemester && entry.originalIndex === currentIndex ?
+                    entry.semester.xqmc + "（当前）" : entry.semester.xqmc;
             })),
             0
         );
         if (selectedIndex === null || selectedIndex === undefined || selectedIndex === -1) return null;
-        if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= semesters.length) {
+        if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= semesterEntries.length) {
             throw new Error("无法识别所选学期，请重新导入。");
         }
-        return semesters[selectedIndex];
+        return semesterEntries[selectedIndex].semester;
     }
 
     async function fetchAllScheduleRecords(semesterCode, runtimeToken) {
