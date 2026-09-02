@@ -161,10 +161,9 @@
 
     async function selectSemester(runtimeToken) {
         const semesters = await fetchAllSemesterOptions(runtimeToken);
-        const currentIndex = semesters.findIndex(function (semester) {
+        const currentSemester = semesters.find(function (semester) {
             return String(semester.sfdq) === "0";
         });
-        const hasCurrentSemester = currentIndex >= 0;
         const seasonOrder = { "秋": 0, "夏": 1, "春": 2 };
         const semesterEntries = semesters.map(function (semester, originalIndex) {
             const match = /^(\d{4})年(春|夏|秋)季学期$/.exec(semester.xqmc);
@@ -175,9 +174,6 @@
                 season: match ? match[2] : null
             };
         }).sort(function (left, right) {
-            if (left.originalIndex === right.originalIndex) return 0;
-            if (left.originalIndex === currentIndex) return -1;
-            if (right.originalIndex === currentIndex) return 1;
             if (left.year !== null && right.year === null) return -1;
             if (left.year === null && right.year !== null) return 1;
             if (left.year !== null && right.year !== null) {
@@ -187,13 +183,16 @@
             }
             return left.originalIndex - right.originalIndex;
         });
+        const defaultIndex = currentSemester ? semesterEntries.findIndex(function (entry) {
+            return entry.semester === currentSemester;
+        }) : 0;
         const selectedIndex = await window.shiguangBridgePromise.showSingleSelection(
             "请选择导入学期",
             JSON.stringify(semesterEntries.map(function (entry) {
-                return hasCurrentSemester && entry.originalIndex === currentIndex ?
+                return entry.semester === currentSemester ?
                     entry.semester.xqmc + "（当前）" : entry.semester.xqmc;
             })),
-            0
+            defaultIndex
         );
         if (selectedIndex === null || selectedIndex === undefined || selectedIndex === -1) return null;
         if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= semesterEntries.length) {
